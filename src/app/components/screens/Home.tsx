@@ -8,10 +8,13 @@ import { toast } from 'sonner';
 
 export const Home = () => {
   const navigate = useNavigate();
-  const { totalBalance, offlineBalance, connectionStatus, autoReplenishment, lastAutoTopUp, clearLastAutoTopUp } = useWallet();
+  const { totalBalance, offlineBalance, onlineBalance, connectionStatus, autoReplenishment, lastAutoTopUp, clearLastAutoTopUp } = useWallet();
   const [alertDismissed, setAlertDismissed] = useState(false);
   const [seenZeroOfflineHelp, setSeenZeroOfflineHelp] = useState(
     () => localStorage.getItem('filia_seen_zero_offline') === 'true'
+  );
+  const [hasPreviouslyFundedOffline, setHasPreviouslyFundedOffline] = useState(
+    () => localStorage.getItem('filia_ever_had_offline_balance') === 'true'
   );
   const lastToastedId = useRef<number | null>(null);
 
@@ -20,12 +23,26 @@ export const Home = () => {
   const isPreOnboarding = !autoReplenishment.enabled && offlineBalance === 0;
   const isLowOfflineBalance = offlineBalance < autoReplenishment.minThreshold && !isOffline && !isSyncing && !autoReplenishment.enabled && !isPreOnboarding;
   const offlineReady = offlineBalance >= autoReplenishment.minThreshold;
-  // Show contextual help when offline with zero balance - only first time ever
-  const showZeroOfflineHelp = isOffline && offlineBalance === 0 && !seenZeroOfflineHelp;
+  // Show contextual help only when: offline, zero balance, never seen before, AND never previously funded
+  // If user has previously had offline balance they already understand the dual wallet system
+  const showZeroOfflineHelp = isOffline && offlineBalance === 0 && !seenZeroOfflineHelp && !hasPreviouslyFundedOffline;
+  // Show insufficient funds alert when auto top-up is on but online balance can't cover the top-up
+  const amountNeededForTopUp = autoReplenishment.targetBalance - offlineBalance;
+  const cannotAutoTopUp = autoReplenishment.enabled && !isOffline && !isSyncing
+    && offlineBalance < autoReplenishment.minThreshold
+    && onlineBalance < amountNeededForTopUp;
 
   useEffect(() => {
     if (offlineReady) setAlertDismissed(false);
   }, [offlineReady]);
+
+  // Once the offline wallet ever has funds, record it so contextual help is never shown again
+  useEffect(() => {
+    if (offlineBalance > 0 && !hasPreviouslyFundedOffline) {
+      localStorage.setItem('filia_ever_had_offline_balance', 'true');
+      setHasPreviouslyFundedOffline(true);
+    }
+  }, [offlineBalance, hasPreviouslyFundedOffline]);
 
   // Toast once per auto top-up event, then clear so remounting Home doesn't re-fire
   useEffect(() => {
@@ -126,7 +143,31 @@ export const Home = () => {
           )}
         </AnimatePresence>
 
-        {/* Balance display */}
+        {/* Insufficient funds alert - auto top-up enabled but total balance too low */}
+        <AnimatePresence>
+          {cannotAutoTopUp && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="w-full overflow-hidden"
+            >
+              <div className="bg-red-50 border-2 border-red-400 rounded-2xl p-4">
+                <div className="flex items-start gap-3">
+                  <TriangleAlert className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <h4 className="text-red-900 mb-1">Cannot maintain offline wallet</h4>
+                    <p className="text-sm text-red-800">
+                      Your main balance (€{onlineBalance.toFixed(2)}) is too low to top up the
+                      offline wallet to €{autoReplenishment.targetBalance.toFixed(0)}.
+                      Add funds to restore offline payment capability.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
